@@ -7,27 +7,65 @@ interface Message {
   type?: 'chat' | 'notification';
 }
 
-interface ChatStore {
-  username: string;
+interface Room {
+  name: string;
   messages: Message[];
+  unreadCount: number;
+  unread: number;
+  active: boolean;
+}
+
+interface ChatStore {
+  activeRoomId: string | null;
+  username: string;
+  rooms: Record<string, Room>;
   setUsername: (username: string) => void;
-  addMessage: (message: Message) => void;
-  clearMessages: () => void;
+  addMessage: (roomId: string, message: Message) => void;
+  clearMessages: (roomId: string) => void;
+  markRoomAsRead: (roomId: string) => void;
+  setActiveRoom: (roomId: string) => void;
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
+  activeRoomId: null,
   username: '',
-  messages: [],
+  rooms: {},
   setUsername: (username) => set({ username }),
-  addMessage: (message) =>
-    set((state) => ({
-      messages: [
-        ...state.messages,
-        {
-          ...message,
-          type: message.type || 'chat',
+  addMessage: (roomId, message) =>
+    set((state) => {
+      const room = state.rooms[roomId] || { messages: [], unreadCount: 0 };
+      return {
+        rooms: {
+          ...state.rooms,
+          [roomId]: {
+            ...room,
+            messages: [...room.messages, message],
+            unreadCount: room.unreadCount + 1,
+          },
         },
-      ],
+      };
+    }),
+  clearMessages: (roomId) =>
+    set((state) => ({
+      rooms: {
+        ...state.rooms,
+        [roomId]: { ...state.rooms[roomId], messages: [], unreadCount: 0 },
+      },
     })),
-  clearMessages: () => set({ messages: [] }),
+  markRoomAsRead: (roomId) =>
+    set((state) => ({
+      rooms: {
+        ...state.rooms,
+        [roomId]: { ...state.rooms[roomId], unreadCount: 0 },
+      },
+    })),
+
+  setActiveRoom: (roomId) =>
+    set((state) => ({
+      activeRoomId: roomId,
+      rooms: {
+        ...state.rooms,
+        [roomId]: { ...state.rooms[roomId], active: true },
+      },
+    })),
 }));

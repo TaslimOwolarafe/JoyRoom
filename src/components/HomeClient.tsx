@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,20 +18,53 @@ import { useChatStore } from '@/store/chatStore';
 
 export default function HomeClient() {
   const router = useRouter();
-  const setUsername = useChatStore((state) => state.setUsername);
+
+  const { setUsername, rooms, addMessage, setActiveRoom } = useMemo(
+    () => useChatStore.getState(),
+    []
+  );
+
   const [username, setUsernameLocal] = useState('');
   const [roomId, setRoomId] = useState('');
+  const [roomName, setRoomName] = useState('');
 
   const createRoom = () => {
     if (!username.trim()) return;
     const newRoomId = Math.random().toString(36).substring(7);
     setUsername(username);
+
+    useChatStore.setState((state) => ({
+      rooms: {
+        ...state.rooms,
+        [newRoomId]: {
+          name: newRoomId,
+          messages: [],
+          unreadCount: 0,
+          unread: 0,
+          active: false,
+        },
+      },
+    }));
+    
+    setActiveRoom(newRoomId);
     router.push(`/chat/${newRoomId}`);
   };
 
   const joinRoom = () => {
     if (!username.trim() || !roomId.trim()) return;
     setUsername(username);
+    useChatStore.setState((state) => ({
+      rooms: {
+        ...state.rooms,
+        [roomId]: {
+          name: roomId,
+          messages: [],
+          unreadCount: 0,
+          unread: 0,
+          active: false,
+        },
+      },
+    }));
     router.push(`/chat/${roomId}`);
   };
 

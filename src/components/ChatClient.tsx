@@ -10,37 +10,31 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useChatStore } from '@/store/chatStore';
 import { useToast } from '@/hooks/use-toast';
+
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogFooter, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { LogOut, Send, Copy, Plus, MessageSquare } from 'lucide-react';
 
 const TYPING_STOP_DELAY = 7000;
 
 export default function ChatClient() {
+  const [roomName, setRoomName] = useState('');
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
   const router = useRouter();
   const params = useParams();
   const { toast } = useToast();
-  const roomId = params.roomId as string;
+  const roomId = params?.roomId as string;
 
-  const { username, messages, addMessage, clearMessages } = useChatStore();
+  const { username, rooms, addMessage, clearMessages, markRoomAsRead, setActiveRoom, activeRoomId } = useChatStore();
   const [message, setMessage] = useState('');
-
   const [typingUsers, setTypingUsers] = useState(new Set<string>());
-  let typingTimeout: NodeJS.Timeout | null = null; // For debounce
-
-  // Dummy data for rooms - you'll replace this with real data
-  const rooms = [
-    { id: roomId, name: 'Current Room', unread: 0, active: true },
-    { id: 'room-2', name: 'Room 2', unread: 3, active: false },
-    { id: 'room-3', name: 'Room 3', unread: 0, active: false },
-  ];
+  let typingTimeout: NodeJS.Timeout | null = null;
 
   useEffect(() => {
     if (!roomId || !username) {
       router.push('/');
       return;
     }
-
-
-
 
     socket.connect();
     socket.on('connect', () => {
@@ -50,10 +44,11 @@ export default function ChatClient() {
     socket.on('connect_error', (error) => {
       console.error('Connection error:', error.message, error);
     });
+
     socket.emit('join-room', roomId, username);
 
     socket.on('user-joined', (username) => {
-      addMessage({
+      addMessage(roomId, {
         message: `${username} has joined the room.`,
         username: username,
         timestamp: new Date(),
@@ -62,7 +57,7 @@ export default function ChatClient() {
     });
 
     socket.on('user-left', (username) => {
-      addMessage({
+      addMessage(roomId, {
         message: `${username} has left the room.`,
         username: username,
         timestamp: new Date(),
@@ -70,10 +65,9 @@ export default function ChatClient() {
       });
     });
 
-    
-
     socket.on('receive-message', (msg) => {
-      addMessage(msg);
+      addMessage(roomId, msg);
+      markRoomAsRead(roomId);
     });
 
     socket.on('typing', (typingUsername) => {
@@ -90,26 +84,24 @@ export default function ChatClient() {
 
     return () => {
       socket.disconnect();
-      clearMessages();
+      clearMessages(roomId);
       socket.off('connect');
       socket.off('connect_error');
       socket.off('receive-message');
       socket.off('typing');
       socket.off('stopped-typing');
     };
-  }, [roomId, username, addMessage, clearMessages, router]);
+  }, [roomId, username, addMessage, clearMessages, markRoomAsRead, router]);
 
   const sendMessage = () => {
     if (!message.trim()) return;
-    // addMessage({ message, username, timestamp: new Date() });
     socket.emit('send-message', roomId, message, username);
     setMessage('');
     socket.emit('user-stopped-typing', roomId, username);
   };
 
   const leaveRoom = () => {
-    // if (socket.connected) {
-    socket.emit('leave-room', roomId, username)
+    socket.emit('leave-room', roomId, username);
     router.push('/');
   };
 
@@ -125,18 +117,42 @@ export default function ChatClient() {
     const value = e.target.value;
     setMessage(value);
 
-    // Emit 'user-typing' when the user types
     socket.emit('user-typing', roomId, username);
 
-    // Clear previous timeout
     if (typingTimeout) clearTimeout(typingTimeout);
 
-    // Set a new timeout to emit 'user-stopped-typing'
     typingTimeout = setTimeout(() => {
       socket.emit('user-stopped-typing', roomId, username);
     }, TYPING_STOP_DELAY);
   };
 
+  const handleJoinRoom = () => {
+    const trimmedRoomName = roomName.trim();
+
+    if (!trimmedRoomName) {
+      alert('Please enter a room name or ID.');
+      return;
+    }
+
+    useChatStore.setState((state) => ({
+      rooms: {
+        ...state.rooms,
+        [trimmedRoomName]: state.rooms[trimmedRoomName] || {
+          name: trimmedRoomName,
+          messages: [],
+          unreadCount: 0,
+          unread: 0,
+          active: false,
+        },
+      },
+    }));
+
+    setActiveRoom(trimmedRoomName);
+    router.push(`/chat/${encodeURIComponent(trimmedRoomName)}`);
+
+    setIsDialogOpen(false);
+    setRoomName('');
+  };
 
   return (
     <div className="h-[calc(100vh)]">
@@ -145,30 +161,56 @@ export default function ChatClient() {
         <Card className="col-span-3 flex flex-col h-full rounded-none">
           <div className="p-4 border-b">
             <h2 className="font-semibold text-lg mb-4">Your Chats</h2>
-            <Button className="w-full" variant="outline">
-              <Plus className="h-4 w-4 mr-2" />
-              Join New Room
-            </Button>
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="w-full" variant="outline">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Join New Room
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Join a Room</DialogTitle>
+                  <DialogDescription>Enter the room name or ID below to join.</DialogDescription>
+                </DialogHeader>
+                <Input
+                  placeholder="Room Name or ID"
+                  value={roomName}
+                  onChange={(e) => setRoomName(e.target.value)}
+                  className="mt-4"
+                />
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setIsDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={handleJoinRoom}>Join Room</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
           <ScrollArea className="flex-1">
             <div className="p-2">
-              {rooms.map((room) => (
-                <div key={room.id}>
-                  <Button
-                    variant={room.active ? 'secondary' : 'ghost'}
-                    className="w-full justify-start mb-1"
-                    onClick={() => router.push(`/chat/${room.id}`)}
-                  >
-                    <MessageSquare className="h-4 w-4 mr-2" />
-                    <span className="flex-1 text-left">{room.name}</span>
-                    {room.unread > 0 && (
-                      <span className="bg-primary text-primary-foreground rounded-full px-2 py-0.5 text-xs">
-                        {room.unread}
-                      </span>
-                    )}
-                  </Button>
-                </div>
-              ))}
+              {Object.keys(rooms).map((roomKey) => {
+                const room = rooms[roomKey];
+                console.log(rooms)
+                return (
+                  <div key={roomKey}>
+                    <Button
+                      variant={room.active ? 'secondary' : 'ghost'}
+                      className="w-full justify-start mb-1"
+                      onClick={() => router.push(`/chat/${roomKey}`)}
+                    >
+                      <MessageSquare className="h-4 w-4 mr-2" />
+                      <span className="flex-1 text-left">{room.name}</span>
+                      {room.unreadCount > 0 && (
+                        <span className="bg-primary text-primary-foreground rounded-full px-2 py-0.5 text-xs">
+                          {room.unreadCount}
+                        </span>
+                      )}
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
           </ScrollArea>
           <Separator />
@@ -212,11 +254,10 @@ export default function ChatClient() {
           {/* Messages Area */}
           <ScrollArea className="flex-1 p-4">
             <div className="space-y-4">
-              {messages.map((msg, idx) => (
+              {rooms[roomId]?.messages?.map((msg, idx) => (
                 <div
                   key={idx}
-                  className={`flex flex-col ${msg.username === username ? 'items-end' : 'items-start'
-                    }`}
+                  className={`flex flex-col ${msg.username === username ? 'items-end' : 'items-start'}`}
                 >
                   {msg.type === 'notification' ? (
                     <div className="max-w-[80%] p-3 bg-muted text-muted-foreground text-center italic">
