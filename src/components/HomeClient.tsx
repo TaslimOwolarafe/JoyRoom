@@ -28,44 +28,102 @@ export default function HomeClient() {
   const [roomId, setRoomId] = useState('');
   const [roomName, setRoomName] = useState('');
 
-  const createRoom = () => {
+  const createRoom = async () => {
     if (!username.trim()) return;
     const newRoomId = Math.random().toString(36).substring(7);
-    setUsername(username);
 
-    useChatStore.setState((state) => ({
-      rooms: {
-        ...state.rooms,
-        [newRoomId]: {
-          name: newRoomId,
-          messages: [],
-          unreadCount: 0,
-          unread: 0,
-          active: false,
+    try {
+      const response = await fetch('/api/rooms/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, roomName: newRoomId }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to create room:', await response.json());
+        return;
+      }
+
+      const { roomId, roomName } = await response.json();
+      setRoomName(roomName)
+
+      setUsername(username);
+
+      useChatStore.setState((state) => ({
+        rooms: {
+          ...state.rooms,
+          [newRoomId]: {
+            name: newRoomId,
+            messages: [],
+            unreadCount: 0,
+            unread: 0,
+            active: false,
+            owner: username,
+            participants: [username],
+          },
         },
-      },
-    }));
-    
-    setActiveRoom(newRoomId);
-    router.push(`/chat/${newRoomId}`);
+      }));
+
+      setActiveRoom(newRoomId);
+      router.push(`/chat/${newRoomId}`);
+    } catch (error) {
+      console.error('Error creating room:', error);
+    }
   };
 
-  const joinRoom = () => {
+  const joinRoom = async () => {
     if (!username.trim() || !roomId.trim()) return;
-    setUsername(username);
-    useChatStore.setState((state) => ({
-      rooms: {
-        ...state.rooms,
-        [roomId]: {
-          name: roomId,
-          messages: [],
-          unreadCount: 0,
-          unread: 0,
-          active: false,
+    console.log(username, roomId)
+    try {
+      const response = await fetch(`/api/rooms/${roomId}/participants`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      },
-    }));
-    router.push(`/chat/${roomId}`);
+        body: JSON.stringify({ username }),
+      });
+  
+      if (!response.ok) {
+        console.log('Failed to join room:', await response.json());
+        return;
+      }
+
+      const data = await response.json();
+
+      setUsername(username);
+
+      useChatStore.setState((state) => {
+        const room = state.rooms[roomId];
+        if (!room) {
+          return {
+            rooms: {
+              ...state.rooms,
+              [roomId]: {
+                name: roomId,
+                owner: username,
+                participants: [username],
+                messages: [],
+                unreadCount: 0,
+                unread: 0,
+                active: false,
+              },
+            },
+          };
+        } else {
+          if (!room.participants.includes(username)) {
+            room.participants.push(username);
+          }
+          return {
+            rooms: { ...state.rooms },
+          };
+        }
+      });
+    
+      setActiveRoom(roomId);
+      router.push(`/chat/${roomId}`);
+    } catch (error) {
+      console.error('Error joining room:', error);
+    }
   };
 
   return (

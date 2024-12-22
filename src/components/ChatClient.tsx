@@ -11,12 +11,20 @@ import { Separator } from '@/components/ui/separator';
 import { useChatStore } from '@/store/chatStore';
 import { useToast } from '@/hooks/use-toast';
 
+import { Drawer, DrawerTrigger, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogFooter, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { LogOut, Send, Copy, Plus, MessageSquare } from 'lucide-react';
 
 const TYPING_STOP_DELAY = 7000;
 
+interface Participant {
+  id: string;
+  username: string;
+}
 export default function ChatClient() {
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [isFetching, setIsFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [roomName, setRoomName] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
@@ -25,10 +33,41 @@ export default function ChatClient() {
   const { toast } = useToast();
   const roomId = params?.roomId as string;
 
-  const { username, rooms, addMessage, clearMessages, markRoomAsRead, setActiveRoom, activeRoomId } = useChatStore();
+  const { username, rooms, addMessage, clearMessages, markRoomAsRead, setActiveRoom, activeRoomId, removeParticipant, addParticipant } = useChatStore();
   const [message, setMessage] = useState('');
   const [typingUsers, setTypingUsers] = useState(new Set<string>());
   let typingTimeout: NodeJS.Timeout | null = null;
+
+  // const { rooms, username, removeParticipant } = useChatStore((state) => ({
+  //   rooms: state.rooms,
+  //   username: state.username,
+  //   removeParticipant: state.removeParticipant,
+  // }));
+
+  const fetchParticipants = async () => {
+    setIsFetching(true);
+    setFetchError(null);
+
+    try {
+      const response = await fetch(`/api/rooms/${roomId}/participants`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch participants');
+      }
+      const data = await response.json();
+      setParticipants(data);
+      console.log(participants)
+    } catch (error) {
+      setFetchError('An error occurred');
+    } finally {
+      setIsFetching(false);
+    }
+  };
+
+
+  
+
+  const room = rooms[roomId];
+  const isOwner = room?.owner === username;
 
   useEffect(() => {
     if (!roomId || !username) {
@@ -54,6 +93,7 @@ export default function ChatClient() {
         timestamp: new Date(),
         type: 'notification',
       });
+      addParticipant(roomId, username);
     });
 
     socket.on('user-left', (username) => {
@@ -63,6 +103,17 @@ export default function ChatClient() {
         timestamp: new Date(),
         type: 'notification',
       });
+      removeParticipant(roomId, username)
+    });
+
+    socket.on('remove-participant', (participant) => {
+      addMessage(roomId, {
+        message: `${participant} was removed by the room owner.`,
+        username: participant,
+        timestamp: new Date(),
+        type: 'notification',
+      });
+      useChatStore.getState().removeParticipant(roomId, participant); // Direct update
     });
 
     socket.on('receive-message', (msg) => {
@@ -82,6 +133,7 @@ export default function ChatClient() {
       });
     });
 
+
     return () => {
       socket.disconnect();
       clearMessages(roomId);
@@ -90,6 +142,9 @@ export default function ChatClient() {
       socket.off('receive-message');
       socket.off('typing');
       socket.off('stopped-typing');
+      socket.off('user-joined');
+      socket.off('user-left');
+      socket.off('remove-participant');
     };
   }, [roomId, username, addMessage, clearMessages, markRoomAsRead, router]);
 
@@ -101,6 +156,7 @@ export default function ChatClient() {
   };
 
   const leaveRoom = () => {
+    useChatStore.getState().leaveRoom(roomId);
     socket.emit('leave-room', roomId, username);
     router.push('/');
   };
@@ -147,11 +203,66 @@ export default function ChatClient() {
       },
     }));
 
-    setActiveRoom(trimmedRoomName);
-    router.push(`/chat/${encodeURIComponent(trimmedRoomName)}`);
+    joinRoom();
 
     setIsDialogOpen(false);
     setRoomName('');
+  };
+  
+  const joinRoom = async () => {
+    if (!username.trim() || !roomName.trim()) return;
+    console.log(username, roomName)
+    try {
+      const response = await fetch(`/api/rooms/${roomName}/participants`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username }),
+      });
+      
+      if (!response.ok) {
+        console.log('Failed to join room:', await response.json());
+        return;
+      }
+      
+      if (response.ok) {
+        setActiveRoom(roomName);
+        router.push(`/chat/${roomName}`);
+        return;
+      }
+      const data = await response.json();
+
+      useChatStore.setState((state) => {
+        const room = state.rooms[roomName];
+        if (!room) {
+          return {
+            rooms: {
+              ...state.rooms,
+              [roomId]: {
+                name: roomId,
+                owner: username,
+                participants: [username],
+                messages: [],
+                unreadCount: 0,
+                unread: 0,
+                active: false,
+              },
+            },
+          };
+        } else {
+          if (!room.participants.includes(username)) {
+            room.participants.push(username);
+          }
+          return {
+            rooms: { ...state.rooms },
+          };
+        }
+      });
+    
+    } catch (error) {
+      console.log('Error joining room:', error);
+    }
   };
 
   return (
@@ -247,6 +358,48 @@ export default function ChatClient() {
                     <Copy className="h-4 w-4" />
                   </Button>
                 </div>
+                <Drawer>
+                  <DrawerTrigger asChild>
+                    <Button
+                      variant="outline"
+                      onClick={fetchParticipants} // Fetch participants on button click
+                      disabled={isFetching} // Disable while fetching
+                    >
+                      {isFetching ? 'Loading...' : 'View Participants'}
+                    </Button>
+                  </DrawerTrigger>
+                  <DrawerContent>
+                    <DrawerHeader>
+                      <DrawerTitle>Participants</DrawerTitle>
+                    </DrawerHeader>
+                    <div className="p-4 space-y-4">
+                      {fetchError && (
+                        <div className="text-red-500 text-sm">
+                          Error: {fetchError}
+                        </div>
+                      )}
+                      {!isFetching && participants.length === 0 && !fetchError && (
+                        <div className="text-muted-foreground">
+                          No participants found.
+                        </div>
+                      )}
+                      {participants.map((participant) => (
+                        <div key={participant.id} className="flex items-center justify-between">
+                          <span>{participant.username}</span>
+                          {isOwner && participant.username !== username && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => removeParticipant(roomId, participant.username)}
+                            >
+                              Remove
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </DrawerContent>
+                </Drawer>
               </div>
             </div>
           </div>
