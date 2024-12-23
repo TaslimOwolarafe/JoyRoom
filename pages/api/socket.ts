@@ -24,17 +24,17 @@ const SocketHandler = (req: NextApiRequest, res: NextApiResponseWithSocket) => {
     return res.end();
   }
 
-  // const io = new Server(res.socket.server, {
-  //   path: '/api/socket',
-  //   cors: {
-  //     origin: 'http://localhost/3000', // Adjust as needed for your CORS policy
-  //     methods: ['GET', 'POST'],
-  //   },
-  // });
-  // // const io = new Server({ path: "/api/socket", addTrailingSlash: false, cors: { origin: "*" } }).listen(PORT)
-  // res.socket.server.io = io;
-  const io = new Server(res.socket.server)
-  res.socket.server.io = io
+  const io = new Server(res.socket.server, {
+    path: '/api/socket',
+    cors: {
+      origin: 'http://localhost:3000', // Adjust as needed for your CORS policy
+      methods: ['GET', 'POST'],
+    },
+  });
+  // const io = new Server({ path: "/api/socket", addTrailingSlash: false, cors: { origin: "*" } }).listen(PORT)
+  // const io = new Server(res.socket.server)
+  res.socket.server.io = io;
+  // res.socket.server.io = io
 
   const userRooms = new Map();
 

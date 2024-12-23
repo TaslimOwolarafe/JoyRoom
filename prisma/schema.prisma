@@ -35,4 +35,10 @@ model Message {
   room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   readBy    String[]
+  messageType MessageType @default(chat)
+}
+
+enum MessageType {
+  chat
+  notification
 }

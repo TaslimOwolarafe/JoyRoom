@@ -21,6 +21,14 @@ interface Participant {
   id: string;
   username: string;
 }
+
+interface ApiMessage {
+  id: string;
+  content: string;
+  sender: string;
+  createdAt: string;
+  messageType?: 'chat' | 'notification';
+}
 export default function ChatClient() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [isFetching, setIsFetching] = useState(false);
@@ -33,7 +41,7 @@ export default function ChatClient() {
   const { toast } = useToast();
   const roomId = params?.roomId as string;
 
-  const { username, rooms, addMessage, clearMessages, markRoomAsRead, setActiveRoom, activeRoomId, removeParticipant, addParticipant } = useChatStore();
+  const { username, rooms, addMessage, clearMessages, markRoomAsRead, setActiveRoom, activeRoomId, removeParticipant, addParticipant, fetchRooms } = useChatStore();
   const [message, setMessage] = useState('');
   const [typingUsers, setTypingUsers] = useState(new Set<string>());
   let typingTimeout: NodeJS.Timeout | null = null;
@@ -62,9 +70,6 @@ export default function ChatClient() {
       setIsFetching(false);
     }
   };
-
-
-  
 
   const room = rooms[roomId];
   const isOwner = room?.owner === username;
@@ -133,7 +138,7 @@ export default function ChatClient() {
       });
     });
 
-
+    fetchRooms();
     return () => {
       socket.disconnect();
       clearMessages(roomId);
@@ -146,13 +151,27 @@ export default function ChatClient() {
       socket.off('user-left');
       socket.off('remove-participant');
     };
-  }, [roomId, username, addMessage, clearMessages, markRoomAsRead, router]);
+  }, [roomId, username, addMessage, clearMessages, markRoomAsRead, router, fetchRooms]);
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!message.trim()) return;
     socket.emit('send-message', roomId, message, username);
     setMessage('');
     socket.emit('user-stopped-typing', roomId, username);
+
+    try {
+      const response = await fetch(`/api/rooms/${roomId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: message, sender: username, messageType: 'chat' }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to send message');
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+    }
   };
 
   const leaveRoom = () => {
@@ -182,88 +201,153 @@ export default function ChatClient() {
     }, TYPING_STOP_DELAY);
   };
 
-  const handleJoinRoom = () => {
-    const trimmedRoomName = roomName.trim();
+  const handleJoinRoom = async () => {
+  const trimmedRoomName = roomName.trim();
 
-    if (!trimmedRoomName) {
-      alert('Please enter a room name or ID.');
+  if (!trimmedRoomName) {
+    alert('Please enter a room name or ID.');
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/rooms/${trimmedRoomName}/messages`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      console.log('Room does not exist:', await response.json());
       return;
     }
 
-    useChatStore.setState((state) => ({
-      rooms: {
-        ...state.rooms,
-        [trimmedRoomName]: state.rooms[trimmedRoomName] || {
-          name: trimmedRoomName,
-          messages: [],
-          unreadCount: 0,
-          unread: 0,
-          active: false,
+    const messages = await response.json();
+
+    console.log(messages)
+
+    useChatStore.setState((state) => {
+      const newMessages = messages.map((msg: ApiMessage) => ({
+        message: msg.content,
+        username: msg.sender,
+        timestamp: new Date(msg.createdAt),
+        type: msg.messageType || 'chat',
+      }));
+    
+      return {
+        rooms: {
+          ...state.rooms,
+          [trimmedRoomName]: {
+            ...(state.rooms[trimmedRoomName] || {
+              name: trimmedRoomName,
+              messages: [],
+              unreadCount: 0,
+              unread: 0,
+              active: false,
+            }),
+            messages: newMessages,
+          },
         },
-      },
-    }));
+      };
+    });
 
     joinRoom();
-
     setIsDialogOpen(false);
     setRoomName('');
-  };
-  
-  const joinRoom = async () => {
-    if (!username.trim() || !roomName.trim()) return;
-    console.log(username, roomName)
-    try {
-      const response = await fetch(`/api/rooms/${roomName}/participants`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username }),
-      });
-      
-      if (!response.ok) {
-        console.log('Failed to join room:', await response.json());
-        return;
-      }
-      
-      if (response.ok) {
-        setActiveRoom(roomName);
-        router.push(`/chat/${roomName}`);
-        return;
-      }
-      const data = await response.json();
+  } catch (error) {
+    console.error('Error fetching room messages:', error);
+  }
+};
 
-      useChatStore.setState((state) => {
-        const room = state.rooms[roomName];
-        if (!room) {
-          return {
-            rooms: {
-              ...state.rooms,
-              [roomId]: {
-                name: roomId,
-                owner: username,
-                participants: [username],
-                messages: [],
-                unreadCount: 0,
-                unread: 0,
-                active: false,
-              },
-            },
-          };
-        } else {
-          if (!room.participants.includes(username)) {
-            room.participants.push(username);
-          }
-          return {
-            rooms: { ...state.rooms },
-          };
-        }
-      });
-    
-    } catch (error) {
-      console.log('Error joining room:', error);
+const joinRoom = async () => {
+  if (!username.trim() || !roomName.trim()) return;
+
+  try {
+    const response = await fetch(`/api/rooms/${roomName}/participants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username }),
+    });
+
+    if (!response.ok) {
+      console.log('Failed to join room:', await response.json());
+      return;
     }
-  };
+
+    const data = await response.json();
+
+    useChatStore.setState((state) => {
+      const room = state.rooms[roomName];
+      if (!room) {
+        return {
+          rooms: {
+            ...state.rooms,
+            [roomName]: {
+              name: roomName,
+              owner: data.owner || username,
+              participants: data.participants || [username],
+              messages: [],
+              unreadCount: 0,
+              unread: 0,
+              active: false,
+            },
+          },
+        };
+      } else {
+        if (!room.participants.includes(username)) {
+          room.participants.push(username);
+        }
+        return {
+          rooms: { ...state.rooms },
+        };
+      }
+    });
+
+    router.push(`/chat/${roomName}`);
+  } catch (error) {
+    console.log('Error joining room:', error);
+  }
+};
+
+const handleRoomClick = async (roomKey: string) => {
+  try {
+    const response = await fetch(`/api/rooms/${roomKey}/messages`);
+    if (!response.ok) {
+      console.error(`Failed to fetch messages for room ${roomKey}:`, response.statusText);
+      return;
+    }
+
+    const apiMessages = await response.json();
+    console.log(apiMessages)
+
+    const newMessages = apiMessages.map((msg: ApiMessage) => ({
+      message: msg.content,
+      username: msg.sender,
+      timestamp: new Date(msg.createdAt),
+      type: msg.messageType || 'chat',
+    }));
+
+    useChatStore.setState((state) => {
+      const updatedRooms = Object.fromEntries(
+        Object.entries(state.rooms).map(([key, room]) => [
+          key,
+          {
+            ...room,
+            active: key === roomKey,
+            messages: key === roomKey ? newMessages : room.messages,
+          },
+        ])
+      );
+
+      setActiveRoom(roomKey)
+      return { rooms: updatedRooms };
+    });
+
+    // Navigate to the selected room
+    router.push(`/chat/${roomKey}`);
+  } catch (error) {
+    console.error(`Error fetching messages for room ${roomKey}:`, error);
+  }
+};
+
 
   return (
     <div className="h-[calc(100vh)]">
@@ -303,13 +387,13 @@ export default function ChatClient() {
             <div className="p-2">
               {Object.keys(rooms).map((roomKey) => {
                 const room = rooms[roomKey];
-                console.log(rooms)
+                // console.log(rooms)
                 return (
                   <div key={roomKey}>
                     <Button
                       variant={room.active ? 'secondary' : 'ghost'}
                       className="w-full justify-start mb-1"
-                      onClick={() => router.push(`/chat/${roomKey}`)}
+                      onClick={() => handleRoomClick(roomKey)}
                     >
                       <MessageSquare className="h-4 w-4 mr-2" />
                       <span className="flex-1 text-left">{room.name}</span>

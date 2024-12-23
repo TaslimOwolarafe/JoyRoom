@@ -10,14 +10,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   if (req.method === 'POST') {
-    console.log('POST')
+    console.log('POST', 'participant')
     if (!username) {
       return res.status(400).json({ error: 'Username is required to add a participant.' });
     }
 
     console.log(username)
     try {
-      const room = await prisma.room.findFirst({
+      const room = await prisma.room.findFirstOrThrow({
         where: { name: roomName },
       });
 
@@ -44,7 +44,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       return res.status(201).json(participant);
     } catch (error) {
-      console.error('Error adding participant:', error);
+      console.log('Error adding participant:', error);
       return res.status(500).json({ error: 'Failed to add participant' });
     }
   }

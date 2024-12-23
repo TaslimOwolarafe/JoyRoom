@@ -29,11 +29,14 @@ interface ChatStore {
   addParticipant: (roomId: string, participant: string) => void;
   removeParticipant: (roomId: string, username: string) => void;
   leaveRoom: (roomId: string) => void;
+  fetchMessages: (roomId: string) => void;
+  sendMessage: (roomId: string, content: string) => void;
+  fetchRooms: () => void;
 }
 
 
 
-export const useChatStore = create<ChatStore>((set) => ({
+export const useChatStore = create<ChatStore>((set, get) => ({
   activeRoomId: null,
   username: '',
   rooms: {},
@@ -53,22 +56,55 @@ export const useChatStore = create<ChatStore>((set) => ({
       };
     }),
 
-    addParticipant: (roomId, participant) =>
-      set((state) => {
-        const room = state.rooms[roomId];
-        if (room && !room.participants.includes(participant)) {
-          return {
-            rooms: {
-              ...state.rooms,
-              [roomId]: {
-                ...room,
-                participants: [...room.participants, participant],
-              },
+
+  fetchMessages: async (roomId: string) => {
+    const response = await fetch(`/api/rooms/${roomId}/messages`);
+    const messages: Message[] = await response.json();
+    set((state) => ({
+      rooms: {
+        ...state.rooms,
+        [roomId]: {
+          ...state.rooms[roomId],
+          messages,
+        },
+      },
+    }));
+  },
+
+  sendMessage: async (roomId: string, content: string) => {
+    const username = get().username;
+    const response = await fetch(`/api/rooms/${roomId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, username, messageType: 'chat' }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to send message');
+      return;
+    }
+
+    const message = await response.json();
+    get().addMessage(roomId, message);
+  },
+
+  addParticipant: (roomId, participant) =>
+    set((state) => {
+      const room = state.rooms[roomId];
+      console.log(room)
+      if (room && !room.participants?.includes(participant)) {
+        return {
+          rooms: {
+            ...state.rooms,
+            [roomId]: {
+              ...room,
+              participants: [...room.participants, participant],
             },
-          };
-        }
-        return state;
-      }),
+          },
+        };
+      }
+      return state;
+    }),
 
   clearMessages: (roomId) =>
     set((state) => ({
@@ -94,6 +130,31 @@ export const useChatStore = create<ChatStore>((set) => ({
       },
     })),
 
+  fetchRooms: async () => {
+    const username = get().username;
+    if (!username) {
+      console.error('Username is required to fetch rooms.');
+      return;
+    }
+    try {
+      const response = await fetch(`/api/rooms?username=${username}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch rooms');
+      }
+  
+      const rooms: Room[] = await response.json();
+  
+      const roomsState = rooms.reduce((acc, room) => {
+        acc[room.name] = room;
+        return acc;
+      }, {} as Record<string, Room>);
+  
+      set({ rooms: roomsState });
+    } catch (error) {
+      console.error('Error fetching rooms:', error);
+    }
+  },
+
   removeParticipant: (roomId: string, username: string) =>
     set((state) => {
       const room = state.rooms[roomId];
@@ -118,12 +179,12 @@ export const useChatStore = create<ChatStore>((set) => ({
         const newParticipants = room.participants.filter(
           (user) => user !== state.username
         );
-  
+
         let newOwner = room.owner;
         if (room.owner === state.username && newParticipants.length > 0) {
           newOwner = newParticipants[0];
         }
-  
+
         return {
           rooms: {
             ...state.rooms,
